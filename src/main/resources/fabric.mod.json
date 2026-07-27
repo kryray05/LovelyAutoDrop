@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "lovelyautodrop",
+  "version": "${version}",
+  "name": "LovelyAutoDrop",
+  "description": "Client-side automation for SMP order delivery and skeleton/blaze spawner loot. Fully configurable in game, with a hard stop when blocked items (arrow / glowstone dust) appear.",
+  "authors": [
+    "Lovely"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/lovelyautodrop/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      {
+        "adapter": "kotlin",
+        "value": "com.lovely.autodrop.LovelyAutoDropClient"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*",
+    "fabric-language-kotlin": ">=1.13.0"
+  },
+  "suggests": {}
+}
