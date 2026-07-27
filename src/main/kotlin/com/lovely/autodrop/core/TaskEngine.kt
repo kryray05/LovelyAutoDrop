@@ -81,7 +81,7 @@ object TaskEngine {
         lastHealth = player.health
 
         ticksRun++
-        if (cfg.timeoutTicks > 0 && ticksRun > cfg.timeoutTicks * 40) {
+        if (cfg.taskTimeoutSeconds > 0 && ticksRun > cfg.taskTimeoutSeconds * 20) {
             stop("aborted (global timeout)"); return
         }
 

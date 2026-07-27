@@ -22,13 +22,22 @@ object GuiHelper {
 
     fun handler(mc: MinecraftClient): ScreenHandler? = openHandled(mc)?.screenHandler
 
-    fun title(mc: MinecraftClient): String =
+    fun rawTitle(mc: MinecraftClient): String =
         mc.currentScreen?.title?.string.orEmpty()
+
+    fun title(mc: MinecraftClient): String =
+        ItemMatcher.stripFormatting(rawTitle(mc))
 
     fun titleMatches(mc: MinecraftClient, needles: Collection<String>): Boolean {
         if (needles.isEmpty()) return true
-        val t = title(mc).lowercase(Locale.ROOT)
-        return needles.any { it.isNotBlank() && t.contains(it.trim().lowercase(Locale.ROOT)) }
+        val cleanT = title(mc).lowercase(Locale.ROOT)
+        val unaccentedT = ItemMatcher.removeAccents(cleanT)
+        return needles.any { needle ->
+            if (needle.isBlank()) return@any false
+            val cleanN = ItemMatcher.stripFormatting(needle).lowercase(Locale.ROOT)
+            val unaccentedN = ItemMatcher.removeAccents(cleanN)
+            cleanT.contains(cleanN) || unaccentedT.contains(unaccentedN)
+        }
     }
 
     /**
@@ -84,17 +93,19 @@ object GuiHelper {
     /**
      * Fingerprint of the container contents. When this value changes we
      * know the server pushed new content or modified container slots.
+     * [filter] can be provided to exclude menu buttons or dynamic slots.
      */
-    fun contentHash(handler: ScreenHandler): Int {
+    fun contentHash(handler: ScreenHandler, filter: ((Slot) -> Boolean)? = null): Int {
         var h = 1
         for (slot in handler.slots) {
             if (isPlayerSlot(slot)) continue
+            if (filter != null && !filter(slot)) continue
             val s = slot.stack
             if (s.isEmpty) {
                 h = 31 * h
             } else {
                 val itemHash = net.minecraft.registry.Registries.ITEM.getId(s.item).hashCode()
-                h = 31 * h + (itemHash * 31 + s.count * 17 + s.components.hashCode())
+                h = 31 * h + (itemHash * 31 + s.count * 17)
             }
         }
         return h

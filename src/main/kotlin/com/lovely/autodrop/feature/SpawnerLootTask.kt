@@ -5,6 +5,7 @@ import com.lovely.autodrop.core.Task
 import com.lovely.autodrop.util.Chat
 import com.lovely.autodrop.util.GuiHelper
 import com.lovely.autodrop.util.ItemMatcher
+import com.lovely.autodrop.util.SpawnerInfoParser
 import net.minecraft.client.MinecraftClient
 import net.minecraft.item.ItemStack
 import net.minecraft.screen.slot.SlotActionType
@@ -27,6 +28,7 @@ import kotlin.random.Random
  *   Drops allowed items straight out of the player inventory, keeping
  *   [ModConfig.spawnerKeepAmount] of each. Blocked items are never dropped.
  */
+
 class SpawnerLootTask : Task {
 
     override val name = "Spawner"
@@ -34,12 +36,16 @@ class SpawnerLootTask : Task {
     private var clicks = 0
     private var dropped = 0
     private var cooldown = 0
+    private var actionCooldown = 0
     private var lastHash = Int.MIN_VALUE
     private var idleTicks = 0
     private var paused = false
     private var pausedHash = Int.MIN_VALUE
     private var note = ""
     private var clickedOnCurrentHash = false
+    private var statsParsedThisRun = false
+    private var droppedOnCurrentHash = false
+    private var soldOnCurrentHash = false
 
     override val status: String
         get() = buildString {
@@ -56,13 +62,15 @@ class SpawnerLootTask : Task {
             return false
         }
 
+        if (actionCooldown > 0) actionCooldown--
+
         if (cooldown > 0) {
             cooldown--
             return true
         }
 
-        if (cfg.maxClicksPerRun in 1..clicks) {
-            Chat.warn("Click limit (${cfg.maxClicksPerRun}) reached.")
+        if (cfg.maxClicksPerRun in 1..(clicks + dropped)) {
+            Chat.warn("Action limit (${cfg.maxClicksPerRun}) reached.")
             return false
         }
 
@@ -79,11 +87,38 @@ class SpawnerLootTask : Task {
                 return true
             }
 
-            val hash = GuiHelper.contentHash(handler)
+            if (!statsParsedThisRun) {
+                val stats = handler.slots.firstNotNullOfOrNull { slot -> SpawnerInfoParser.parse(slot.stack) }
+                if (stats != null) {
+                    statsParsedThisRun = true
+                    Chat.info("§a[LAD] Nhận diện Spawner: ${stats.title}")
+                    Chat.info("§7  • Chồng: ${stats.stackSize} lồng | Tốc độ: ${stats.speedMinSec}-${stats.speedMaxSec}s")
+                    Chat.info("§7  • Sản xuất: ${stats.itemsMinPerCycle}-${stats.itemsMaxPerCycle} món/lần (~${"%.1f".format(stats.itemsPerSecond)} món/s)")
+
+                    if (cfg.autoSpawnerAutoAdjust) {
+                        val fillTimeMins = stats.calculateFillTimeMinutes(cfg.autoSpawnerTargetItems)
+                        // User requirement: Loop interval MUST BE AT LEAST 15-30 minutes
+                        val newMin = fillTimeMins.toInt().coerceIn(15, 180)
+                        val newMax = (fillTimeMins * 1.25).toInt().coerceIn(newMin, 180).coerceAtLeast(30)
+
+                        if (cfg.autoSpawnerMinMinutes != newMin || cfg.autoSpawnerMaxMinutes != newMax) {
+                            cfg.autoSpawnerMinMinutes = newMin
+                            cfg.autoSpawnerMaxMinutes = newMax
+                            cfg.save()
+                            AutoSpawnerRoutine.resetTimer()
+                            Chat.success("§a  -> Đã tự động cập nhật Auto Loop: ${newMin}m - ${newMax}m (Tối thiểu 15 phút/chu kỳ)")
+                        }
+                    }
+                }
+            }
+
+            val hash = GuiHelper.contentHash(handler) { slot -> !isMenuButton(slot.stack, cfg) }
             if (hash != lastHash) {
                 lastHash = hash
                 idleTicks = 0
                 clickedOnCurrentHash = false
+                droppedOnCurrentHash = false
+                soldOnCurrentHash = false
                 if (paused && hash != pausedHash) {
                     paused = false
                     note = ""
@@ -92,8 +127,8 @@ class SpawnerLootTask : Task {
             } else {
                 idleTicks++
                 if (clickedOnCurrentHash) {
-                    if (idleTicks > 60) {
-                        // 3 seconds passed after button click without hash change -> allow retry
+                    if (idleTicks > cfg.guiIdleTimeoutTicks) {
+                        // Configured timeout passed after button click without hash change -> allow retry
                         clickedOnCurrentHash = false
                         idleTicks = 0
                     } else {
@@ -105,9 +140,8 @@ class SpawnerLootTask : Task {
             if (paused) return true
 
             val container = GuiHelper.containerSlots(handler)
-            // Top 5 lines in a 6-line container GUI (first 45 slots = lines 1..5).
-            // Filter out menu & navigation buttons (like "GO BACK", "Kho Chứa", "Drop Loot", "SELL ALL").
-            val containerLootSlots = if (container.size > 45) container.take(45) else container
+            // Protect Row 6 (slots 45..53 in a 54-slot chest GUI) from being treated as loot storage
+            val containerLootSlots = if (container.size >= 54) container.take(45) else container
             val lootSlots = containerLootSlots.filter { !isMenuButton(it.stack, cfg) }
 
             val sellSlot = container.firstOrNull { slot ->
@@ -124,49 +158,71 @@ class SpawnerLootTask : Task {
             }
 
             // ---- 1. MENU NAVIGATION: "KHO CHỨA" Storage Button ----
-            // Always click "KHO CHỨA" first if we are still on the Main Menu
             if (storageSlot != null) {
-                if (!clickedOnCurrentHash && GuiHelper.click(mc, storageSlot.id, 0, SlotActionType.PICKUP)) {
+                if (!clickedOnCurrentHash && actionCooldown <= 0 && GuiHelper.click(mc, storageSlot.id, 0, SlotActionType.PICKUP)) {
                     clicks++
                     clickedOnCurrentHash = true
-                    cooldown = nextDelay(cfg)
+                    val delay = nextDelay(cfg)
+                    cooldown = delay
+                    actionCooldown = maxOf(delay, cfg.settleTicks + 5, 10)
                     note = "clicked Kho Chứa"
                     return true
                 }
                 return true
             }
 
-            // ---- 2. INSIDE "KHO CHỨA" STORAGE GUI ----
-            val hasStorageActionButtons = sellSlot != null || dropSlot != null
-            val hasLootItemsInSlots = lootSlots.any { !it.stack.isEmpty }
+            // ---- 2. INSIDE STORAGE GUI: Drop Loot -> Sell All Sequence ----
+            val hasValuableLootInStorage = lootSlots.any { slot ->
+                val s = slot.stack
+                !s.isEmpty && !isMenuButton(s, cfg) && !isBlocked(s, cfg)
+            }
+            val arrowCountInStorage = lootSlots
+                .filter { slot -> !slot.stack.isEmpty && isBlocked(slot.stack, cfg) }
+                .sumOf { it.stack.count }
 
-            if (hasLootItemsInSlots && hasStorageActionButtons) {
-                val hasTriggerItem = lootSlots.any { slot ->
-                    val s = slot.stack
-                    !s.isEmpty && (
-                        cfg.spawnerSellTriggerItems.isEmpty() ||
-                        ItemMatcher.matchesAny(s, cfg.spawnerSellTriggerItems) ||
-                        ItemMatcher.matchesAny(s, cfg.spawnerBlockItems)
-                    )
-                }
+            val hasTrashItemsInStorage = arrowCountInStorage > 0
+            val hasMoreThanOneStackOfArrows = arrowCountInStorage > 64
 
-                if (hasTriggerItem && sellSlot != null) {
-                    if (!clickedOnCurrentHash && GuiHelper.click(mc, sellSlot.id, 0, SlotActionType.PICKUP)) {
-                        clicks++
-                        clickedOnCurrentHash = true
-                        cooldown = nextDelay(cfg)
-                        note = "clicked SELL ALL (trigger item in GUI)"
-                        return true
-                    }
-                } else if (dropSlot != null) {
-                    if (!clickedOnCurrentHash && GuiHelper.click(mc, dropSlot.id, 0, SlotActionType.PICKUP)) {
-                        clicks++
-                        clickedOnCurrentHash = true
-                        cooldown = nextDelay(cfg)
-                        note = "clicked Drop Loot"
-                        return true
-                    }
+            // Step 2A: Always click DROP LOOT while valuable items (blaze_rod, bone, etc.) exist in storage
+            // (unless > 1 stack of arrows accumulates)
+            if (dropSlot != null && hasValuableLootInStorage && !hasMoreThanOneStackOfArrows) {
+                if (actionCooldown <= 0 && GuiHelper.click(mc, dropSlot.id, 0, SlotActionType.PICKUP)) {
+                    clicks++
+                    dropped++
+                    clickedOnCurrentHash = true
+                    val delay = nextDelay(cfg)
+                    cooldown = delay
+                    actionCooldown = maxOf(delay, cfg.settleTicks + 5, 10)
+                    note = "clicked Drop Loot"
+                    return true
                 }
+                return true // Stay in task while valuable loot is present
+            }
+
+            // Step 2B: Trigger SELL ALL if:
+            // 1. More than 1 stack of arrows (>64 items) is present, OR
+            // 2. No valuable loot remains and trash items exist.
+            val shouldSellAll = sellSlot != null && !soldOnCurrentHash && (
+                hasMoreThanOneStackOfArrows || (!hasValuableLootInStorage && hasTrashItemsInStorage)
+            )
+
+            if (shouldSellAll && sellSlot != null) {
+                if (actionCooldown <= 0 && GuiHelper.click(mc, sellSlot.id, 0, SlotActionType.PICKUP)) {
+                    clicks++
+                    clickedOnCurrentHash = true
+                    soldOnCurrentHash = true
+                    val delay = nextDelay(cfg)
+                    cooldown = delay
+                    actionCooldown = maxOf(delay, cfg.settleTicks + 5, 10)
+                    note = if (hasMoreThanOneStackOfArrows) "clicked SELL ALL (> 1 stack arrows)" else "clicked SELL ALL (trash items)"
+                    return true
+                }
+                return true
+            }
+
+            // Step 2C: Finish when storage is empty or action sequence complete
+            if (!hasValuableLootInStorage && (!hasTrashItemsInStorage || soldOnCurrentHash || dropSlot == null) && actionCooldown <= 0) {
+                return finish(mc, cfg)
             }
 
             // ---- 3. THE GUARD (Blocked Items Check) ----
@@ -185,7 +241,7 @@ class SpawnerLootTask : Task {
 
                     ModConfig.BlockAction.PAUSE -> {
                         paused = true
-                        pausedHash = GuiHelper.contentHash(handler)
+                        pausedHash = GuiHelper.contentHash(handler) { slot -> !isMenuButton(slot.stack, cfg) }
                         note = "blocked: $what"
                         Chat.info("Blocked item on page ($what). Pausing until it changes.")
                         return true
@@ -202,6 +258,7 @@ class SpawnerLootTask : Task {
                 val s = slot.stack
                 if (s.isEmpty) return@firstOrNull false
                 if (isBlocked(s, cfg)) return@firstOrNull false // never click blocked
+                if (cfg.spawnerSkipNamedItems && ItemMatcher.isCustom(s)) return@firstOrNull false
                 ItemMatcher.matchesAny(s, cfg.spawnerAllowItems)
             }
 
@@ -240,11 +297,18 @@ class SpawnerLootTask : Task {
         val player = mc.player ?: return false
         val handler = player.currentScreenHandler ?: return false
 
+        if (cfg.maxClicksPerRun in 1..(clicks + dropped)) {
+            Chat.warn("Action limit (${cfg.maxClicksPerRun}) reached.")
+            return false
+        }
+
         val slot = handler.slots.firstOrNull { s ->
             if (!GuiHelper.isPlayerSlot(s)) return@firstOrNull false
+            if (cfg.spawnerProtectLastHotbarSlot && GuiHelper.isLastHotbarSlot(s)) return@firstOrNull false
             val stack = s.stack
             if (stack.isEmpty) return@firstOrNull false
             if (isBlocked(stack, cfg)) return@firstOrNull false
+            if (cfg.spawnerSkipNamedItems && ItemMatcher.isCustom(stack)) return@firstOrNull false
             if (!ItemMatcher.matchesAny(stack, cfg.spawnerAllowItems)) return@firstOrNull false
             countOf(mc, stack) > cfg.spawnerKeepAmount
         }
@@ -261,11 +325,12 @@ class SpawnerLootTask : Task {
         return true
     }
 
-    /** Total amount of that item across the whole inventory. */
+    /** Total amount of that item across the main player inventory. */
     private fun countOf(mc: MinecraftClient, like: ItemStack): Int {
         val inv = mc.player?.inventory ?: return 0
         var total = 0
-        for (i in 0 until inv.size()) {
+        val maxSlot = minOf(inv.size(), 36)
+        for (i in 0 until maxSlot) {
             val s = inv.getStack(i)
             if (!s.isEmpty && s.item == like.item) total += s.count
         }

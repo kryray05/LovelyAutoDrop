@@ -53,8 +53,11 @@ data class ModConfig(
     /** Hard cap: abort a task after this many total clicks. 0 = unlimited. */
     var maxClicksPerRun: Int = 0,
 
-    /** Abort if the GUI does not respond for this many ticks. */
-    var timeoutTicks: Int = 200,
+    /** Abort the task if it runs for longer than this many seconds (0 = disabled). */
+    var taskTimeoutSeconds: Int = 200,
+
+    /** Abort / retry if the GUI does not respond for this many ticks. */
+    var guiIdleTimeoutTicks: Int = 100,
 
     // -------------------------------------------------------------- /orders
     var ordersEnabled: Boolean = true,
@@ -81,6 +84,97 @@ data class ModConfig(
     var ordersTitleMatch: MutableList<String> = mutableListOf(
         "order",
         "orders",
+        "deliver",
+        "giao",
+        "collect",
+    ),
+
+    /** Keywords to match the 'ORDER CỦA BẠN' button in main order menu. */
+    var ordersYourOrdersButtonNames: MutableList<String> = mutableListOf(
+        "order của bạn",
+        "order cua ban",
+        "your orders",
+        "your order",
+        "đơn hàng của bạn",
+        "don hang cua ban",
+        "đơn hàng",
+        "don hang",
+        "tất cả đơn hàng",
+        "tat ca don hang",
+        "danh sách đơn hàng",
+        "danh sach don hang",
+        "giao hàng",
+        "giao hang",
+        "nhận/giao hàng",
+        "nhan/giao hang",
+    ),
+
+    /** Keywords to match the 'NHẬN' / 'GIAO HÀNG' button in edit order menu. */
+    var ordersClaimButtonNames: MutableList<String> = mutableListOf(
+        "nhận",
+        "nhan",
+        "claim",
+        "collect",
+        "deliver",
+        "giao",
+        "giao hàng",
+        "giao hang",
+        "giao đơn",
+        "giao don",
+        "nhận đơn",
+        "nhan don",
+        "giao vật phẩm",
+        "giao vat pham",
+        "nhận vật phẩm",
+        "nhan vat pham",
+        "bấm để nhận",
+        "bam de nhan",
+        "bấm để giao",
+        "bam de giao",
+        "nộp",
+        "nop",
+        "trả",
+        "tra",
+        "xác nhận",
+        "xac nhan",
+        "thực hiện",
+        "thuc hien",
+        "chấp nhận",
+        "chap nhan",
+        "tiến hành",
+        "tien hanh",
+        "hoàn thành",
+        "hoan thanh",
+    ),
+
+    /** Keywords to match the 'DROP ALL' button in collect items menu. */
+    var ordersDropAllButtonNames: MutableList<String> = mutableListOf(
+        "drop all",
+        "drop_all",
+        "deliver all",
+        "deliver_all",
+        "thả tất cả",
+        "tha tat ca",
+        "giao tất cả",
+        "giao tat ca",
+        "giao vật phẩm",
+        "giao vat pham",
+        "bấm để drop",
+        "bấm để giao",
+        "bam de giao",
+        "drop hết",
+        "giao hết",
+    ),
+
+    /** Keywords to match page navigation (Next Page) in collect items menu. */
+    var ordersNextPageButtonNames: MutableList<String> = mutableListOf(
+        "next",
+        "trang",
+        "tiếp",
+        "tiep",
+        "sau",
+        "forward",
+        ">",
     ),
 
     /**
@@ -132,6 +226,13 @@ data class ModConfig(
         "drop loot",
         "drop_loot",
         "thả vật phẩm",
+        "drop all",
+        "thả tất cả",
+        "xả kho",
+        "xả đồ",
+        "thả đồ",
+        "drop",
+        "click to drop",
     ),
 
     /** Keywords to match the 'SELL ALL' button in spawner storage menu. */
@@ -139,6 +240,11 @@ data class ModConfig(
         "sell all",
         "sell_all",
         "bán tất cả",
+        "bán đồ",
+        "bán rác",
+        "bán hết",
+        "sell",
+        "click to sell",
     ),
 
     /** Keywords to match 'GO BACK' or navigation buttons in spawner storage menu. */
@@ -170,6 +276,10 @@ data class ModConfig(
         "truoc",
         "forward",
         "backward",
+        ">",
+        "<",
+        "->",
+        "<-",
     ),
 
     /** Item IDs or wildcards that trigger clicking 'SELL ALL' instead of 'Drop Loot'. */
@@ -184,7 +294,21 @@ data class ModConfig(
     /** Items we WANT to collect / drop from the spawner screen. */
     var spawnerAllowItems: MutableList<String> = mutableListOf(
         "minecraft:bone",
+        "bone",
         "minecraft:blaze_rod",
+        "blaze_rod",
+        "blaze",
+        "rod",
+        "rotten_flesh",
+        "flesh",
+        "gunpowder",
+        "string",
+        "spider_eye",
+        "ender_pearl",
+        "pearl",
+        "iron_ingot",
+        "gold_nugget",
+        "gold_ingot",
     ),
 
     /**
@@ -214,6 +338,31 @@ data class ModConfig(
 
     /** In inventory mode, keep this many of each allowed item. */
     var spawnerKeepAmount: Int = 0,
+
+    /** Keep the hotbar slot 9 (index 8) untouched in spawner mode. */
+    var spawnerProtectLastHotbarSlot: Boolean = true,
+
+    /** Never drop or collect a stack that is renamed / has custom lore. */
+    var spawnerSkipNamedItems: Boolean = true,
+
+    // -------------------------------------------------- auto spawner timer loop
+    /** Master toggle for periodic automatic spawner right-click + drop/sell loop. */
+    var autoSpawnerEnabled: Boolean = false,
+
+    /** Minimum interval delay in minutes (default 15m). */
+    var autoSpawnerMinMinutes: Int = 15,
+
+    /** Maximum interval delay in minutes (default 30m). */
+    var autoSpawnerMaxMinutes: Int = 30,
+
+    /** Automatically right-click the spawner block directly in front of player before running drop/sell. */
+    var autoSpawnerInteractBeforeLoot: Boolean = true,
+
+    /** Automatically parse spawner stats from GUI tooltip and adjust loop timer interval. */
+    var autoSpawnerAutoAdjust: Boolean = true,
+
+    /** Target storage capacity item count used to calculate optimal fill time (default 320 items = 5 slots * 64). */
+    var autoSpawnerTargetItems: Int = 320,
 ) {
 
     enum class BlockAction { STOP, SKIP, PAUSE }

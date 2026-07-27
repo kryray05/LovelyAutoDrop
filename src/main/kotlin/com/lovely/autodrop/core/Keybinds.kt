@@ -1,6 +1,7 @@
 package com.lovely.autodrop.core
 
 import com.lovely.autodrop.config.ModConfig
+import com.lovely.autodrop.feature.AutoSpawnerRoutine
 import com.lovely.autodrop.feature.OrderDeliverTask
 import com.lovely.autodrop.feature.SpawnerLootTask
 import com.lovely.autodrop.gui.ConfigScreen
@@ -26,6 +27,8 @@ object Keybinds {
         private set
     lateinit var runSpawner: KeyBinding
         private set
+    lateinit var autoSpawnerLoop: KeyBinding
+        private set
     lateinit var panic: KeyBinding
         private set
 
@@ -33,6 +36,7 @@ object Keybinds {
         openConfig = bind("key.lovelyautodrop.config", GLFW.GLFW_KEY_P)
         runOrders = bind("key.lovelyautodrop.orders", GLFW.GLFW_KEY_O)
         runSpawner = bind("key.lovelyautodrop.spawner", GLFW.GLFW_KEY_K)
+        autoSpawnerLoop = bind("key.lovelyautodrop.autoloop", GLFW.GLFW_KEY_J)
         panic = bind("key.lovelyautodrop.panic", GLFW.GLFW_KEY_BACKSLASH)
     }
 
@@ -71,6 +75,10 @@ object Keybinds {
             } else {
                 TaskEngine.toggle { SpawnerLootTask() }
             }
+        }
+
+        while (autoSpawnerLoop.wasPressed()) {
+            AutoSpawnerRoutine.toggle()
         }
     }
 }

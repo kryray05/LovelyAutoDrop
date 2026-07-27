@@ -12,10 +12,12 @@ import net.minecraft.util.Formatting
  * Modern, self-contained config UI. No ModMenu or external GUI dependencies needed.
  * Works seamlessly on Vanilla Fabric and Lunar Client.
  */
+import com.lovely.autodrop.feature.AutoSpawnerRoutine
+
 class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAutoDrop")) {
 
     private enum class Tab(val label: String) {
-        GENERAL("General"), ORDERS("Orders"), SPAWNER("Spawner")
+        GENERAL("General"), ORDERS("Orders"), SPAWNER("Spawner"), AUTO_LOOP("Auto Loop")
     }
 
     private var tab = Tab.GENERAL
@@ -24,6 +26,9 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
     private var ordersItemsField: TextFieldWidget? = null
     private var ordersTitleField: TextFieldWidget? = null
     private var ordersCommandField: TextFieldWidget? = null
+    private var ordersYourOrdersField: TextFieldWidget? = null
+    private var ordersClaimField: TextFieldWidget? = null
+    private var ordersDropAllField: TextFieldWidget? = null
     private var spawnerAllowField: TextFieldWidget? = null
     private var spawnerBlockField: TextFieldWidget? = null
     private var spawnerTitleField: TextFieldWidget? = null
@@ -50,23 +55,25 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
 
         // Tab selection bar
         var tx = left
+        val tabW = 72
         for (t in Tab.entries) {
             val isSelected = t == tab
-            val tabLabel = if (isSelected) "§b§l> ${t.label}" else "§7${t.label}"
+            val tabLabel = if (isSelected) "§b§l${t.label}" else "§7${t.label}"
             addDrawableChild(
                 ButtonWidget.builder(Text.literal(tabLabel)) {
                     applyFields()
                     tab = t
                     init()
-                }.dimensions(tx, 32, 98, 20).build()
+                }.dimensions(tx, 32, tabW, 20).build()
             )
-            tx += 102
+            tx += tabW + 4
         }
 
         when (tab) {
             Tab.GENERAL -> initGeneral()
             Tab.ORDERS -> initOrders()
             Tab.SPAWNER -> initSpawner()
+            Tab.AUTO_LOOP -> initAutoLoop()
         }
 
         // Footer buttons
@@ -120,11 +127,14 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
         slider(left, y, "Settle ticks", cfg.settleTicks, 0, 20) {
             cfg.settleTicks = it
         }
-        slider(left + colW + 10, y, "Timeout ticks", cfg.timeoutTicks, 20, 600) {
-            cfg.timeoutTicks = it
+        slider(left + colW + 10, y, "Watchdog (sec)", cfg.taskTimeoutSeconds, 0, 600) {
+            cfg.taskTimeoutSeconds = it
         }
         y += rowH
-        slider(left, y, "Max clicks (0=off)", cfg.maxClicksPerRun, 0, 5000) {
+        slider(left, y, "GUI timeout (t)", cfg.guiIdleTimeoutTicks, 10, 300) {
+            cfg.guiIdleTimeoutTicks = it
+        }
+        slider(left + colW + 10, y, "Max clicks (0=off)", cfg.maxClicksPerRun, 0, 5000) {
             cfg.maxClicksPerRun = it
         }
 
@@ -136,32 +146,30 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
         toggle(left, y, "Orders enabled", cfg.ordersEnabled) {
             cfg.ordersEnabled = !cfg.ordersEnabled; refresh()
         }
-        toggle(left + colW + 10, y, "Shift-click", cfg.ordersUseShiftClick) {
-            cfg.ordersUseShiftClick = !cfg.ordersUseShiftClick; refresh()
-        }
-        y += rowH
-        toggle(left, y, "Close when done", cfg.ordersCloseWhenDone) {
+        toggle(left + colW + 10, y, "Close when done", cfg.ordersCloseWhenDone) {
             cfg.ordersCloseWhenDone = !cfg.ordersCloseWhenDone; refresh()
         }
-        toggle(left + colW + 10, y, "Skip named items", cfg.ordersSkipNamedItems) {
-            cfg.ordersSkipNamedItems = !cfg.ordersSkipNamedItems; refresh()
-        }
-        y += rowH
-        toggle(left, y, "Protect hotbar slot 9", cfg.ordersProtectLastHotbarSlot) {
-            cfg.ordersProtectLastHotbarSlot = !cfg.ordersProtectLastHotbarSlot; refresh()
-        }
-        y += rowH + 6
+        y += rowH + 4
 
-        captions.add(Caption(left, y, "§7Order Command (without leading slash):"))
-        ordersCommandField = field(left, y + 10, cfg.ordersCommand)
-        y += rowH + 12
+        captions.add(Caption(left, y, "§7Order Command:"))
+        captions.add(Caption(left + colW + 10, y, "§7Order Items (bone, blaze_rod):"))
+        y += 10
+        ordersCommandField = fieldHalf(left, y, cfg.ordersCommand)
+        ordersItemsField = fieldHalf(left + colW + 10, y, cfg.ordersItems.joinToString(", "))
+        y += rowH + 2
 
-        captions.add(Caption(left, y, "§7Allowed Items to Deliver (comma separated):"))
-        ordersItemsField = field(left, y + 10, cfg.ordersItems.joinToString(", "))
-        y += rowH + 12
+        captions.add(Caption(left, y, "§b'ORDER CỦA BẠN' Button:"))
+        captions.add(Caption(left + colW + 10, y, "§b'NHẬN' Button:"))
+        y += 10
+        ordersYourOrdersField = fieldHalf(left, y, cfg.ordersYourOrdersButtonNames.joinToString(", "))
+        ordersClaimField = fieldHalf(left + colW + 10, y, cfg.ordersClaimButtonNames.joinToString(", "))
+        y += rowH + 2
 
-        captions.add(Caption(left, y, "§7Order GUI Title Match (case-insensitive):"))
-        ordersTitleField = field(left, y + 10, cfg.ordersTitleMatch.joinToString(", "))
+        captions.add(Caption(left, y, "§e'DROP ALL' Button:"))
+        captions.add(Caption(left + colW + 10, y, "§eTitle Match:"))
+        y += 10
+        ordersDropAllField = fieldHalf(left, y, cfg.ordersDropAllButtonNames.joinToString(", "))
+        ordersTitleField = fieldHalf(left + colW + 10, y, cfg.ordersTitleMatch.joinToString(", "))
     }
 
     private fun initSpawner() {
@@ -178,6 +186,13 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
         }
         toggle(left + colW + 10, y, "Close when done", cfg.spawnerCloseWhenDone) {
             cfg.spawnerCloseWhenDone = !cfg.spawnerCloseWhenDone; refresh()
+        }
+        y += rowH
+        toggle(left, y, "Protect slot 9", cfg.spawnerProtectLastHotbarSlot) {
+            cfg.spawnerProtectLastHotbarSlot = !cfg.spawnerProtectLastHotbarSlot; refresh()
+        }
+        toggle(left + colW + 10, y, "Skip named items", cfg.spawnerSkipNamedItems) {
+            cfg.spawnerSkipNamedItems = !cfg.spawnerSkipNamedItems; refresh()
         }
         y += rowH
 
@@ -235,6 +250,48 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
         spawnerTitleField = field(left, y + 10, cfg.spawnerTitleMatch.joinToString(", "))
     }
 
+    private fun initAutoLoop() {
+        var y = 62
+        toggle(left, y, "Auto Loop Enabled", cfg.autoSpawnerEnabled) {
+            cfg.autoSpawnerEnabled = !cfg.autoSpawnerEnabled
+            if (cfg.autoSpawnerEnabled) AutoSpawnerRoutine.resetTimer()
+            refresh()
+        }
+        toggle(left + colW + 10, y, "Auto Right-Click", cfg.autoSpawnerInteractBeforeLoot) {
+            cfg.autoSpawnerInteractBeforeLoot = !cfg.autoSpawnerInteractBeforeLoot
+            refresh()
+        }
+        y += rowH + 4
+
+        toggle(left, y, "Auto-Detect Stats", cfg.autoSpawnerAutoAdjust) {
+            cfg.autoSpawnerAutoAdjust = !cfg.autoSpawnerAutoAdjust
+            refresh()
+        }
+        slider(left + colW + 10, y, "Target Storage (items)", cfg.autoSpawnerTargetItems, 128, 5760) {
+            cfg.autoSpawnerTargetItems = it
+        }
+        y += rowH + 8
+
+        slider(left, y, "Min Interval (min)", cfg.autoSpawnerMinMinutes, 1, 180) {
+            cfg.autoSpawnerMinMinutes = it
+            if (cfg.autoSpawnerMaxMinutes < it) cfg.autoSpawnerMaxMinutes = it
+        }
+        slider(left + colW + 10, y, "Max Interval (min)", cfg.autoSpawnerMaxMinutes, 1, 180) {
+            cfg.autoSpawnerMaxMinutes = it.coerceAtLeast(cfg.autoSpawnerMinMinutes)
+        }
+        y += rowH + 16
+
+        captions.add(Caption(left, y, "§a§lAutomatic Spawner Routine Settings:"))
+        y += 14
+        captions.add(Caption(left, y, "§7- Auto-Detect Stats: Reads spawner stack size & production speed."))
+        y += 12
+        captions.add(Caption(left, y, "§7- Dynamically adjusts loop interval based on spawner quantity."))
+        y += 12
+        captions.add(Caption(left, y, "§7- Current timer range: ${cfg.autoSpawnerMinMinutes}m - ${cfg.autoSpawnerMaxMinutes}m"))
+        y += 12
+        captions.add(Caption(left, y, "§7- Keybind: 'J' | Command: /lad loop or /lad autospawner"))
+    }
+
     // --------------------------------------------------------------- widgets
 
     private fun toggle(x: Int, y: Int, label: String, value: Boolean, onClick: () -> Unit) {
@@ -280,6 +337,9 @@ class ConfigScreen(private val parent: Screen?) : Screen(Text.literal("LovelyAut
         ordersCommandField?.let { cfg.ordersCommand = it.text.trim().replace(Regex("^/+"), "") }
         ordersItemsField?.let { cfg.ordersItems = splitList(it.text) }
         ordersTitleField?.let { cfg.ordersTitleMatch = splitList(it.text) }
+        ordersYourOrdersField?.let { cfg.ordersYourOrdersButtonNames = splitList(it.text) }
+        ordersClaimField?.let { cfg.ordersClaimButtonNames = splitList(it.text) }
+        ordersDropAllField?.let { cfg.ordersDropAllButtonNames = splitList(it.text) }
         spawnerAllowField?.let { cfg.spawnerAllowItems = splitList(it.text) }
         spawnerBlockField?.let { cfg.spawnerBlockItems = splitList(it.text) }
         spawnerTitleField?.let { cfg.spawnerTitleMatch = splitList(it.text) }

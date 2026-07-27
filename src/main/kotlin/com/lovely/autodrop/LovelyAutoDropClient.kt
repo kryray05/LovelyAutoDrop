@@ -4,6 +4,7 @@ import com.lovely.autodrop.config.ModConfig
 import com.lovely.autodrop.core.Commands
 import com.lovely.autodrop.core.Keybinds
 import com.lovely.autodrop.core.TaskEngine
+import com.lovely.autodrop.feature.AutoSpawnerRoutine
 import com.lovely.autodrop.gui.HudOverlay
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
@@ -34,6 +35,7 @@ object LovelyAutoDropClient : ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register { mc: MinecraftClient ->
             Keybinds.handle(mc)
             TaskEngine.tick(mc)
+            AutoSpawnerRoutine.tick(mc)
         }
 
         HudElementRegistry.addLast(
