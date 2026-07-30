@@ -112,7 +112,11 @@ class SpawnerLootTask : Task {
                 }
             }
 
-            val hash = GuiHelper.contentHash(handler) { slot -> !isMenuButton(slot.stack, cfg) }
+            val container = GuiHelper.containerSlots(handler)
+            val hash = GuiHelper.contentHash(handler) { slot ->
+                if (container.size >= 54 && slot.id in 45..53) return@contentHash false
+                !isMenuButton(slot.stack, cfg)
+            }
             if (hash != lastHash) {
                 lastHash = hash
                 idleTicks = 0
@@ -139,7 +143,6 @@ class SpawnerLootTask : Task {
 
             if (paused) return true
 
-            val container = GuiHelper.containerSlots(handler)
             // Protect Row 6 (slots 45..53 in a 54-slot chest GUI) from being treated as loot storage
             val containerLootSlots = if (container.size >= 54) container.take(45) else container
             val lootSlots = containerLootSlots.filter { !isMenuButton(it.stack, cfg) }
@@ -184,8 +187,7 @@ class SpawnerLootTask : Task {
             val hasMoreThanOneStackOfArrows = arrowCountInStorage > 64
 
             // Step 2A: Always click DROP LOOT while valuable items (blaze_rod, bone, etc.) exist in storage
-            // (unless > 1 stack of arrows accumulates)
-            if (dropSlot != null && hasValuableLootInStorage && !hasMoreThanOneStackOfArrows) {
+            if (dropSlot != null && hasValuableLootInStorage) {
                 if (actionCooldown <= 0 && GuiHelper.click(mc, dropSlot.id, 0, SlotActionType.PICKUP)) {
                     clicks++
                     dropped++
@@ -199,15 +201,11 @@ class SpawnerLootTask : Task {
                 return true // Stay in task while valuable loot is present
             }
 
-            // Step 2B: Trigger SELL ALL if:
-            // 1. More than 1 stack of arrows (>64 items) is present, OR
-            // 2. No valuable loot remains and trash items exist.
-            val shouldSellAll = sellSlot != null && !soldOnCurrentHash && (
-                hasMoreThanOneStackOfArrows || (!hasValuableLootInStorage && hasTrashItemsInStorage)
-            )
+            // Step 2B: Trigger SELL ALL only when NO valuable loot remains and trash items exist
+            val shouldSellAll = sellSlot != null && !soldOnCurrentHash && !hasValuableLootInStorage && hasTrashItemsInStorage
 
-            if (shouldSellAll && sellSlot != null) {
-                if (actionCooldown <= 0 && GuiHelper.click(mc, sellSlot.id, 0, SlotActionType.PICKUP)) {
+            if (shouldSellAll) {
+                if (actionCooldown <= 0 && GuiHelper.click(mc, sellSlot!!.id, 0, SlotActionType.PICKUP)) {
                     clicks++
                     clickedOnCurrentHash = true
                     soldOnCurrentHash = true
@@ -241,7 +239,10 @@ class SpawnerLootTask : Task {
 
                     ModConfig.BlockAction.PAUSE -> {
                         paused = true
-                        pausedHash = GuiHelper.contentHash(handler) { slot -> !isMenuButton(slot.stack, cfg) }
+                        pausedHash = GuiHelper.contentHash(handler) { slot ->
+                            if (container.size >= 54 && slot.id in 45..53) return@contentHash false
+                            !isMenuButton(slot.stack, cfg)
+                        }
                         note = "blocked: $what"
                         Chat.info("Blocked item on page ($what). Pausing until it changes.")
                         return true
